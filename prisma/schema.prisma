@@ -1,0 +1,203 @@
+// ============================================
+// GaragistePro — Prisma Schema
+// Plateforme réservation garages auto premium
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentMode {
+  NONE
+  DEPOSIT
+  FULL
+}
+
+enum PaymentStatus {
+  NOT_REQUIRED
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+// ─── Business (Garage) ──────────────────────
+
+model Business {
+  id          String @id @default(cuid())
+  clerkUserId String
+  name        String
+  slug        String @unique
+  description String? @db.Text
+  phone       String?
+  email       String?
+
+  // Address
+  address    String
+  city       String
+  postalCode String
+  latitude   Float?
+  longitude  Float?
+
+  // Stripe Connect
+  stripeAccountId      String?
+  onlinePaymentEnabled Boolean     @default(false)
+  paymentMode          PaymentMode @default(NONE)
+  depositAmountCents   Int?
+  depositPercent       Int?
+
+  // SEO
+  seoTitle       String?
+  seoDescription String? @db.Text
+
+  // Media
+  logoUrl  String?
+  coverUrl String?
+
+  // Config
+  timezone String  @default("Europe/Paris")
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  services        Service[]
+  businessHours   BusinessHours[]
+  hoursExceptions BusinessHoursException[]
+  bookings        Booking[]
+
+  @@index([clerkUserId])
+  @@index([city])
+  @@index([isActive, city])
+}
+
+// ─── Service (Prestation) ───────────────────
+
+model Service {
+  id          String  @id @default(cuid())
+  businessId  String
+  name        String
+  category    String
+  description String? @db.Text
+  priceCents  Int
+  durationMin Int
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@index([businessId, isActive])
+  @@index([category])
+}
+
+// ─── Business Hours (hebdo) ─────────────────
+
+model BusinessHours {
+  id         String    @id @default(cuid())
+  businessId String
+  dayOfWeek  DayOfWeek
+  openTime   String // "08:00" format HH:mm
+  closeTime  String // "18:00" format HH:mm
+  isClosed   Boolean   @default(false)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, dayOfWeek])
+  @@index([businessId])
+}
+
+// ─── Business Hours Exception ───────────────
+
+model BusinessHoursException {
+  id         String   @id @default(cuid())
+  businessId String
+  date       DateTime @db.Date
+  openTime   String? // null = fermé toute la journée
+  closeTime  String?
+  isClosed   Boolean  @default(true)
+  reason     String?
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, date])
+  @@index([businessId, date])
+}
+
+// ─── Booking (Réservation) ──────────────────
+
+model Booking {
+  id         String @id @default(cuid())
+  businessId String
+  serviceId  String
+
+  // Client (Clerk user or guest info)
+  clerkUserId String?
+  clientName  String
+  clientEmail String
+  clientPhone String?
+
+  // Véhicule (plaque obligatoire)
+  licensePlate String
+  vehicleBrand String?
+  vehicleModel String?
+  vehicleYear  Int?
+  mileage      Int?
+
+  // Créneau (stocké en UTC)
+  startTime DateTime
+  endTime   DateTime
+
+  // Statut
+  status       BookingStatus @default(PENDING)
+  clientNote   String?       @db.Text
+  internalNote String?       @db.Text
+
+  // Paiement
+  priceCents      Int
+  paymentStatus   PaymentStatus @default(NOT_REQUIRED)
+  paymentIntentId String?
+  depositCents    Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id])
+  service  Service  @relation(fields: [serviceId], references: [id])
+
+  // Index critique pour anti-double booking
+  @@index([businessId, startTime, endTime])
+  @@index([businessId, status])
+  @@index([clerkUserId])
+  @@index([startTime])
+}
